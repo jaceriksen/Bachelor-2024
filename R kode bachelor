@@ -1,0 +1,233 @@
+# Henter nødvendige pakker
+
+library(tidyverse)
+library(car)
+library(haven)
+library(sjPlot)
+library(grid)
+library(zoo)
+
+# Setter språk til Norsk
+Sys.setlocale("LC_ALL", "nb-NO.UTF-8")
+
+# Henter data fra Norsk medborgerpanell runde 26, 2023
+data <- read_sav("NSD3127.sav")
+
+# Avhengig variabel
+names(data)[names(data) == "r26_pccoo"] <- "tillit"
+names(data)[names(data) == "r23pk15"] <- "tillit2"
+
+# Uavhengige variabler
+names(data)[names(data) == "r22bk35"] <- "område1"
+names(data)[names(data) == "r23bk35"] <- "område2"
+names(data)[names(data) == "r25_bgurb"] <- "område3"
+
+# Kontrollvariabler
+names(data)[names(data) == "r26_bgciv"] <- "sivilstatus"
+names(data)[names(data) == "r26P1"] <- "kjønn"
+names(data)[names(data) == "r26P5_2"] <- "fødselsår"
+names(data)[names(data) == "r26k2_bginc"] <- "bruttoinntekt_n"
+names(data)[names(data) == "r26P4_1"] <- "utdanning"
+names(data)[names(data) == "r26_bgday"] <- "jobbsituasjon"
+names(data)[names(data) == "w01_k29"] <- "Innvandrerbakgrunn1"
+names(data)[names(data) == "w03_r3k29"] <- "Innvandrerbakgrunn2"
+names(data)[names(data) == "r4k29"] <- "Innvandrerbakgrunn3"
+names(data)[names(data) == "r5k29"] <- "Innvandrerbakgrunn4"
+names(data)[names(data) == "r11bk29"] <- "Innvandrerbakgrunn5"
+names(data)[names(data) == "r14bk29"] <- "Innvandrerbakgrunn6"
+names(data)[names(data) == "r16bk29"] <- "Innvandrerbakgrunn7"
+names(data)[names(data) == "r18bk29"] <- "Innvandrerbakgrunn8"
+names(data)[names(data) == "r22bk29"] <- "Innvandrerbakgrunn9"
+names(data)[names(data) == "r25_bgimm"] <- "Innvandrerbakgrunn10"
+
+names(data)
+
+# Lager ny dataframe med valgte variabler
+data1 <- data %>% 
+  select(tillit, tillit2, område1, område2, område3, sivilstatus, kjønn, 
+         fødselsår, bruttoinntekt_n, utdanning, jobbsituasjon, 
+         Innvandrerbakgrunn1, Innvandrerbakgrunn2, Innvandrerbakgrunn3, 
+         Innvandrerbakgrunn4, Innvandrerbakgrunn5, Innvandrerbakgrunn6, 
+         Innvandrerbakgrunn7, Innvandrerbakgrunn8, Innvandrerbakgrunn9, 
+         Innvandrerbakgrunn10)
+
+# Binær Kjønnsdummy (1 for mann, 0 for kvinne)
+data1$mann <- ifelse(data1$kjønn == 1, 1, 0)
+
+# Filtrerer ut rader med verdiene 97 og 98
+data1 <- data1 %>%
+  mutate(kombinert_tillit = coalesce(tillit, tillit2)) %>%
+  filter(!is.na(kombinert_tillit), kombinert_tillit != 97, kombinert_tillit != 98)
+
+# Gjør fødselsår om til kategoriske variabler
+data1 <- data1 %>%
+  mutate(fødselsår = case_when(
+    fødselsår == 1 ~ '1959 og før',
+    fødselsår == 2 ~ '1960-1989',
+    TRUE ~ '1990 og etter'
+  )) %>%
+  mutate(fødselsår = factor(fødselsår, levels = c('1959 og før', '1960-1989', '1990 og etter')))
+
+# Innvandrerbakgrunn
+data1 <- data1 %>%
+  mutate(kombinert_innvandrer = coalesce(Innvandrerbakgrunn1, Innvandrerbakgrunn2, Innvandrerbakgrunn3, Innvandrerbakgrunn4, Innvandrerbakgrunn5, Innvandrerbakgrunn6, Innvandrerbakgrunn7, Innvandrerbakgrunn8, Innvandrerbakgrunn9, Innvandrerbakgrunn10))%>%
+  select(-Innvandrerbakgrunn1, -Innvandrerbakgrunn2, -Innvandrerbakgrunn3, -Innvandrerbakgrunn4, -Innvandrerbakgrunn5, -Innvandrerbakgrunn6, -Innvandrerbakgrunn7, -Innvandrerbakgrunn8, -Innvandrerbakgrunn9, -Innvandrerbakgrunn10)%>%
+  filter(!is.na(kombinert_innvandrer))
+
+# Omkoding av sivilstatus til en binær variabel "gift_samboer"
+data1 <- data1 %>%
+  mutate(gift_samboer = case_when(
+    sivilstatus %in% c(97, 98) ~ NA_real_,
+    sivilstatus %in% c(1, 2, 5, 6, 7) ~ 0,
+    TRUE ~ 1
+  ))
+
+# Omkoding av utdanning til kategoriske variabler
+data1 <- data1 %>%
+  mutate(utdanning = factor(utdanning, 
+                            levels = c(1, 2, 3),
+                            labels = c("Grunnskole", "Videregående", "Høyere"),
+                            exclude = 97)) %>%
+  mutate(utdanning = fct_relevel(utdanning, "Høyere")) %>%
+  filter(!is.na(utdanning))
+
+# Ny kategorisering av jobbsituasjon
+data1 <- data1 %>%
+  mutate(jobbsituasjon = case_when(
+    jobbsituasjon %in% c(1, 2, 3, 4) ~ 1,  # I arbeid
+    jobbsituasjon == 5 ~ 2,               # Utdanning
+    jobbsituasjon == 6 ~ 3,               # Arbeidsledige
+    jobbsituasjon %in% c(7, 8, 9, 10, 11) ~ 4, # Ikke i arbeidsstyrken
+    jobbsituasjon == 12 ~ 5,              # Annet
+    TRUE ~ NA_real_
+  )) %>% 
+  mutate(jobbsituasjon = factor(jobbsituasjon,
+                                levels = c(1, 2, 3, 4, 5),
+                                labels = c("I arbeid", "Utdanning", "Arbeidsledige", "Ikke i arbeidsstyrken", "Annet")))
+
+# Kombinerer områdene til en variabel "kombinert_område" og filtrerer ut manglende data
+data1 <- data1 %>%
+  mutate(kombinert_område = coalesce(område1, område2, område3))%>%
+  select(-område1, -område2, -område3)%>%
+  filter(!is.na(kombinert_område))
+
+# Gjør "kombinert_område" til en binær variabel
+data1 <- data1 %>%
+  mutate(ruralt = case_when(
+    kombinert_område %in% c(1, 2, 3) ~ 0,   
+    kombinert_område %in% c(4, 5) ~ 1,     
+    TRUE ~ NA_real_                        
+  ))
+
+# Lager variabelen "område" 
+data1 <- data1 %>%
+  mutate(område = case_when(
+    kombinert_område == 1 ~ 'En storby',
+    kombinert_område == 2 ~ 'En forstad eller utkanten av en storby',
+    kombinert_område == 3 ~ 'En liten eller mellomstor by',
+    kombinert_område == 4 ~ 'Et bygdesentrum',
+    kombinert_område == 5 ~ 'Et spredtbygd strøk',
+    kombinert_område %in% c(97, 98) ~ NA_character_
+  )) %>% 
+  mutate(område = factor(område,
+                         levels = c('En storby', 'En forstad eller utkanten av en storby', 'En liten eller mellomstor by', 'Et bygdesentrum', 'Et spredtbygd strøk')))
+
+
+# Omkategorisere 'kombinert_innvandrer' variabelen til ssb sine kategorier av innvandrere
+data1 <- data1 %>%
+  mutate(innvandrer = case_when(
+    kombinert_innvandrer %in% c(1, 4, 5) ~ 'Den øvrige befolkningen',
+    kombinert_innvandrer == 2 ~ 'Innvandrere',
+    kombinert_innvandrer == 3 ~ 'Norskfødte med innvandrerforeldre',
+    kombinert_innvandrer %in% c(97, 98) ~ NA_character_
+  )) %>%
+  mutate(innvandrer = factor(innvandrer,
+                             levels = c('Den øvrige befolkningen', 'Innvandrere', 'Norskfødte med innvandrerforeldre')))
+
+# Endrer bruttoinntekt til tre kategorier: Under 600000, Over 600000 og NA for 97 og 98, og fjerner kategorien NA
+data1 <- data1 %>%
+  mutate(bruttoinntekt = case_when(
+    bruttoinntekt_n %in% c(1, 2, 3, 4, 5) ~ "Under 600000",
+    bruttoinntekt_n %in% c(6, 7, 8) ~ "Over 600000",
+    bruttoinntekt_n %in% c(97, 98) ~ NA_character_
+  )) %>%
+  filter(!is.na(bruttoinntekt))
+
+# Håndterer manglende verdier i jobbsituasjon
+data1 <- data1 %>%
+  group_by(kjønn, fødselsår) %>%
+  fill(jobbsituasjon, .direction = "downup") %>%
+  ungroup() %>%
+  drop_na(jobbsituasjon)
+
+# Lager ny dataframe "reduced_data" med valgte variabler
+reduced_data <- data1 %>% 
+  select(kombinert_tillit, ruralt, område, mann, fødselsår, bruttoinntekt, utdanning, jobbsituasjon, gift_samboer, innvandrer)
+
+# Lineær modell som undersøker sammenhengen mellom kjønn og utdanning, samt kombinert område og bruttoinntekt
+
+model_1 <- lm(kombinert_tillit ~ område, data = reduced_data) 
+
+summary(model_1)
+
+# Lineær modell som undersøker sammenhengen mellom tillit og ruralt
+
+model_2 <- lm(kombinert_tillit ~ ruralt, data = reduced_data)
+
+summary(model_2)
+
+# Lineær modell for å kontrollere for andre variabler
+
+model_3 <- lm(kombinert_tillit ~ ruralt + mann + fødselsår + innvandrer + jobbsituasjon + bruttoinntekt + 
+                gift_samboer + utdanning, data = reduced_data)
+  
+summary(model_3)
+
+# Samme modell som model_3, bare med "område" variabelen i stedet for "ruralt"
+
+model_4 <- lm(kombinert_tillit ~ område + mann + fødselsår + innvandrer + jobbsituasjon + bruttoinntekt + 
+                gift_samboer + utdanning, data = reduced_data)
+
+summary(model_4)
+
+# Lager tabeller av regresjonen fra de fire modellene
+
+tab_model(model_1,
+          encoding = "UTF-8",
+          dv.labels = "Effekt på tillit",
+          digits = 3,
+          string.pred = "Variabler",
+          string.est = "Estimat",
+          string.ci = "Konfidensintervall",
+          string.p = "P-verdi",
+          string.intercept = "Konstantledd")
+
+tab_model(model_2,
+          encoding = "UTF-8",
+          dv.labels = "Effekt på tillit",
+          digits = 3,
+          string.pred = "Variabler",
+          string.est = "Estimat",
+          string.ci = "Konfidensintervall",
+          string.p = "P-verdi",
+          string.intercept = "Konstantledd")
+
+tab_model(model_3,
+          encoding = "UTF-8",
+          dv.labels = "Effekt på tillit",
+          digits = 3,
+          string.pred = "Variabler",
+          string.est = "Estimat",
+          string.ci = "Konfidensintervall",
+          string.p = "P-verdi",
+          string.intercept = "Konstantledd")
+
+tab_model(model_4,
+          encoding = "UTF-8",
+          dv.labels = "Effekt på tillit",
+          digits = 3,
+          string.pred = "Variabler",
+          string.est = "Estimat",
+          string.ci = "Konfidensintervall",
+          string.p = "P-verdi",
+          string.intercept = "Konstantledd")
